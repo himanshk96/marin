@@ -19,7 +19,7 @@ test = ["pytest>=8.3", "pytest-asyncio", "pytest-timeout", "pandas>=2.2"]
 [tool.uv.workspace]
 
 [tool.uv.sources]
-harbor = { git = "https://github.com/marin-community/harbor.git", rev = "ef1eaf207f41f84eb53d17f9c8bd84c073a9aba5" }
+harbor = { git = "https://github.com/marin-community/harbor.git", rev = "952a005353273590631b8f970f4664a121710b32" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/taskcompendium"]

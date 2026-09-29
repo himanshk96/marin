@@ -715,7 +715,7 @@ wheels = [
 [[package]]
 name = "harbor"
 version = "0.8.1"
-source = { git = "https://github.com/marin-community/harbor.git?rev=ef1eaf207f41f84eb53d17f9c8bd84c073a9aba5#ef1eaf207f41f84eb53d17f9c8bd84c073a9aba5" }
+source = { git = "https://github.com/marin-community/harbor.git?rev=952a005353273590631b8f970f4664a121710b32#952a005353273590631b8f970f4664a121710b32" }
 dependencies = [
     { name = "dirhash" },
     { name = "fastapi" },
@@ -2245,7 +2245,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "harbor", marker = "extra == 'harbor'", git = "https://github.com/marin-community/harbor.git?rev=ef1eaf207f41f84eb53d17f9c8bd84c073a9aba5" },
+    { name = "harbor", marker = "extra == 'harbor'", git = "https://github.com/marin-community/harbor.git?rev=952a005353273590631b8f970f4664a121710b32" },
     { name = "pandas", marker = "extra == 'workplace'", specifier = ">=2.2" },
     { name = "pydantic", specifier = ">=2.0" },
 ]
