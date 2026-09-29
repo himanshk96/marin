@@ -50,6 +50,8 @@ TASKCOMPENDIUM_REQUIREMENT = (
     f"git+https://github.com/marin-community/marin.git@{TASKCOMPENDIUM_COMMIT}#subdirectory=lib/taskcompendium"
 )
 CLUSTER = "cw-us-east-02a"
+PACKAGES_ARTIFACT_NAME = "documents/taskcompendium-grug-smoke"
+CHECKPOINT_ARTIFACT_NAME = "checkpoints/taskcompendium-grug-smoke"
 GPUS_PER_NODE = 8
 NUM_NODES = 2
 SEED = 17
@@ -126,7 +128,7 @@ def write_task_packages(config: TaskPackagesConfig) -> None:
 
 def task_packages_step(version: str) -> ArtifactStep[Artifact]:
     return ArtifactStep(
-        name=user_owned_name("documents/taskcompendium-grug-smoke"),
+        name=user_owned_name(PACKAGES_ARTIFACT_NAME),
         version=version,
         artifact_type=Artifact,
         run=remote(
@@ -230,7 +232,7 @@ data:
 
 
 def smoke_step(packages: ArtifactStep[Artifact], runtime_commit: str, version: str) -> ArtifactStep[SkyRLRun]:
-    name = user_owned_name("checkpoints/taskcompendium-grug-smoke")
+    name = user_owned_name(CHECKPOINT_ARTIFACT_NAME)
     return skyrl_step(
         SkyRLSpec(
             name=name,
@@ -271,8 +273,8 @@ def smoke_step(packages: ArtifactStep[Artifact], runtime_commit: str, version: s
 @click.option("--runtime-commit", required=True, help="Immutable MarinSkyRL commit containing TaskCompendium routing")
 @rl_build_options
 def main(runtime_commit: str) -> ArtifactStep[SkyRLRun]:
-    packages = task_packages_step(resolve_version("documents/taskcompendium-grug-smoke", None))
-    return smoke_step(packages, runtime_commit, resolve_version("checkpoints/taskcompendium-grug-smoke", None))
+    packages = task_packages_step(resolve_version(PACKAGES_ARTIFACT_NAME, None))
+    return smoke_step(packages, runtime_commit, resolve_version(CHECKPOINT_ARTIFACT_NAME, None))
 
 
 if __name__ == "__main__":
