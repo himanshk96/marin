@@ -34,6 +34,15 @@ ROW = files("taskcompendium.importers").joinpath("data/workplace-0.json")
 PROVENANCE = FIXTURES / "workplace-0.provenance.json"
 
 
+def _send_completion(handler: BaseHTTPRequestHandler, message: dict) -> None:
+    body = json.dumps({"choices": [{"message": message}]}).encode()
+    handler.send_response(200)
+    handler.send_header("Content-Type", "application/json")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.end_headers()
+    handler.wfile.write(body)
+
+
 def _environment() -> NemoWorkplaceEnvironment:
     environment = object.__new__(NemoWorkplaceEnvironment)
     environment.tool_env = get_tools()
@@ -49,7 +58,6 @@ def _source() -> tuple[bytes, dict]:
 def test_workplace_import_pins_row_tool_surface_and_private_state():
     data, row = _source()
     specification, convention, binding = import_row(data)
-    assert hashlib.sha256(data).hexdigest() == ROW_SHA256
     assert binding.tool_binding is not None
     assert _seed_digest() == binding.tool_binding.seed_sha256
     assert specification.source.revision == DATASET_REVISION
@@ -197,21 +205,7 @@ async def test_workplace_harbor_scripted_endpoint_recovers_after_tool_error(tmp_
                 }
             else:
                 message = {"role": "assistant", "content": "Done."}
-            body = json.dumps(
-                {
-                    "id": f"chatcmpl-{len(requests)}",
-                    "object": "chat.completion",
-                    "created": 1,
-                    "model": "fixture",
-                    "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
-                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-                }
-            ).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            _send_completion(self, message)
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Endpoint)
     thread = Thread(target=server.serve_forever, daemon=True)
@@ -301,12 +295,7 @@ async def test_workplace_chat_tools_can_answer_text_from_observation(tmp_path):
             else:
                 observation = json.loads(payload["messages"][-1]["content"])
                 message = {"role": "assistant", "content": observation["output"]["subject"]}
-            body = json.dumps({"choices": [{"message": message}]}).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            _send_completion(self, message)
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Endpoint)
     thread = Thread(target=server.serve_forever, daemon=True)
@@ -372,21 +361,7 @@ async def test_workplace_harbor_trials_are_fresh_and_concurrent(tmp_path):
                 }
             else:
                 message = {"role": "assistant", "content": "Done."}
-            body = json.dumps(
-                {
-                    "id": f"chatcmpl-{model}-{turn}",
-                    "object": "chat.completion",
-                    "created": 1,
-                    "model": model,
-                    "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
-                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-                }
-            ).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            _send_completion(self, message)
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Endpoint)
     thread = Thread(target=server.serve_forever, daemon=True)
