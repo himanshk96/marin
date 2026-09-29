@@ -176,16 +176,24 @@ class DirectChatAgent(BaseAgent):
 class StatefulToolAgent(DirectChatAgent):
     """Run an ordered tool conversation against one mutable Harbor environment."""
 
-    def __init__(self, *args, max_turns: int, **kwargs):
+    def __init__(self, *args, max_turns: int, temperature: float, parallel_tool_calls: bool, **kwargs):
         super().__init__(*args, **kwargs)
         self.max_turns = max_turns
+        self.temperature = temperature
+        self.parallel_tool_calls = parallel_tool_calls
 
     @staticmethod
     def name() -> str:
         return "taskcompendium-stateful-tools"
 
     def _message(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> dict[str, Any]:
-        body = {"model": self.model_name, "messages": messages, "tools": tools}
+        body = {
+            "model": self.model_name,
+            "messages": messages,
+            "tools": tools,
+            "temperature": self.temperature,
+            "parallel_tool_calls": self.parallel_tool_calls,
+        }
         message = _chat_completion(self.api_base, self.api_key_env, self.request_timeout, body)
         if not isinstance(message, dict) or message.get("role") != "assistant":
             raise ValueError("Stateful completion requires an assistant message")
