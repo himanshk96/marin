@@ -15,9 +15,11 @@ from threading import Lock, Thread
 
 import pytest
 
+from taskcompendium.grading import exact_answer
 from taskcompendium.harbor.runner import AgentStrategy, ChatLaunch, run_trial
 from taskcompendium.importers.nemo_workplace import DATASET_REVISION, ROW_SHA256, import_row
 from taskcompendium.lowering import lower_to_harbor
+from taskcompendium.models import AnswerType, TaskSpec
 from taskcompendium.providers.nemo_workplace.provider import (
     NemoWorkplaceEnvironment,
     _seed_digest,
@@ -25,6 +27,7 @@ from taskcompendium.providers.nemo_workplace.provider import (
 )
 from taskcompendium.providers.nemo_workplace.tools import get_tools
 from taskcompendium.resources import ResourceVisibility
+from taskcompendium.submission import AnswerFormat, SubmissionConvention
 
 FIXTURES = Path(__file__).parent / "fixtures/nemo"
 ROW = files("taskcompendium.importers").joinpath("data/workplace-0.json")
@@ -47,10 +50,11 @@ def test_workplace_import_pins_row_tool_surface_and_private_state():
     data, row = _source()
     specification, convention, binding = import_row(data)
     assert hashlib.sha256(data).hexdigest() == ROW_SHA256
-    assert _seed_digest() == binding.seed_sha256
+    assert binding.tool_binding is not None
+    assert _seed_digest() == binding.tool_binding.seed_sha256
     assert specification.source.revision == DATASET_REVISION
     assert specification.answer_type.value == convention.answer_format.value == "state"
-    assert len(binding.tools) == len(row["responses_create_params"]["tools"]) == 27
+    assert len(binding.tool_binding.tools) == len(row["responses_create_params"]["tools"]) == 27
     assert {resource.visibility for resource in specification.resources} == {ResourceVisibility.VERIFIER}
     assert all(resource.path not in specification.instructions for resource in specification.resources)
     assert "ground_truth" not in specification.instructions
@@ -219,7 +223,7 @@ async def test_workplace_harbor_scripted_endpoint_recovers_after_tool_error(tmp_
             ChatLaunch(
                 model="fixture",
                 api_base=f"http://127.0.0.1:{server.server_port}/v1",
-                strategy=AgentStrategy.STATEFUL_TOOLS,
+                strategy=AgentStrategy.CHAT_TOOLS,
                 max_turns=4,
             ),
             tmp_path / "trials",
@@ -255,6 +259,82 @@ async def test_workplace_harbor_scripted_endpoint_recovers_after_tool_error(tmp_
         "tool",
         "assistant",
     ]
+
+
+async def test_workplace_chat_tools_can_answer_text_from_observation(tmp_path):
+    imported, _, binding = import_row(ROW.read_bytes())
+    subject = "Task Update on Develop prototype for report generation"
+    specification = TaskSpec(
+        id="workplace-subject-answer",
+        instructions="Use the available tools to find the subject of email 00000057.",
+        verifier=exact_answer(subject),
+        source=imported.source,
+        requirements=imported.requirements,
+        answer_type=AnswerType.TEXT,
+    )
+    convention = SubmissionConvention(id="plain", answer_format=AnswerFormat.PLAIN)
+    task_dir = lower_to_harbor(specification, convention, binding, tmp_path / "task")
+    requests = []
+
+    class Endpoint(BaseHTTPRequestHandler):
+        def log_message(self, *_args):
+            pass
+
+        def do_POST(self):
+            payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            requests.append(payload)
+            if len(requests) == 1:
+                message = {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call-subject",
+                            "type": "function",
+                            "function": {
+                                "name": "email_get_email_information_by_id",
+                                "arguments": '{"email_id":"00000057","field":"subject"}',
+                            },
+                        }
+                    ],
+                }
+            else:
+                observation = json.loads(payload["messages"][-1]["content"])
+                message = {"role": "assistant", "content": observation["output"]["subject"]}
+            body = json.dumps({"choices": [{"message": message}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Endpoint)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        result = await run_trial(
+            task_dir,
+            binding,
+            ChatLaunch(
+                model="fixture",
+                api_base=f"http://127.0.0.1:{server.server_port}/v1",
+                strategy=AgentStrategy.CHAT_TOOLS,
+                max_turns=2,
+            ),
+            tmp_path / "trials",
+            "subject",
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+    assert result.exception_info is None, result.exception_info
+    assert result.verifier_result.rewards == {"reward": 1.0}
+    assert len(requests) == 2
+    assert len(requests[0]["tools"]) == 27
+    assert requests[1]["messages"][-1]["tool_call_id"] == "call-subject"
+    assert result.agent_result.metadata["assistant_final"] == subject
 
 
 async def test_workplace_harbor_trials_are_fresh_and_concurrent(tmp_path):
@@ -316,7 +396,7 @@ async def test_workplace_harbor_trials_are_fresh_and_concurrent(tmp_path):
         launch = ChatLaunch(
             model=model,
             api_base=f"http://127.0.0.1:{server.server_port}/v1",
-            strategy=AgentStrategy.STATEFUL_TOOLS,
+            strategy=AgentStrategy.CHAT_TOOLS,
             max_turns=3,
         )
         return await run_trial(task_dir, binding, launch, tmp_path / "trials", model)

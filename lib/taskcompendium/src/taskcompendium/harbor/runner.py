@@ -100,7 +100,7 @@ async def run_trial(
         if tool_binding is not None:
             agent_path = "taskcompendium.harbor.adapter:ChatToolAgent"
             kwargs["max_turns"] = launch.max_turns
-            provider = provider_class(environment_config)
+            provider = provider_class(tool_binding)
             kwargs["temperature"] = provider.REQUEST_TEMPERATURE
             kwargs["parallel_tool_calls"] = provider.REQUEST_PARALLEL_TOOL_CALLS
         agent = {
