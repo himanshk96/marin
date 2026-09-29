@@ -15,7 +15,7 @@ from types import MappingProxyType
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from taskcompendium.models import SCHEMA_VERSION, AnswerType, TaskSpec
+from taskcompendium.models import SCHEMA_VERSION, AnswerType, TaskSpec, VerifierKind
 from taskcompendium.resources import (
     MAX_RESOURCE_BYTES,
     MAX_TOTAL_RESOURCE_BYTES,
@@ -29,8 +29,6 @@ from taskcompendium.resources import (
 from taskcompendium.submission import SubmissionConvention, render_instruction
 from taskcompendium.verifier_registry import validate_verifier
 
-DIRECT_CHAT_ENVIRONMENT = "direct_chat"
-STATEFUL_ENVIRONMENT = "stateful"
 SPECIFICATION_FILE = "specification.json"
 SUBMISSION_CONVENTION_FILE = "submission_convention.json"
 ENVIRONMENT_CONFIG_FILE = "environment_config.json"
@@ -43,61 +41,53 @@ REGISTERED_PROVIDERS: Mapping[str, str] = MappingProxyType(
 )
 
 
-class HarborEnvironmentConfig(BaseModel):
-    """The environment and tools this Harbor lowering exposes to the agent."""
+class ToolBinding(BaseModel):
+    """A pinned chat tool surface and its registered Harbor provider."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    environment: str = DIRECT_CHAT_ENVIRONMENT
-    tools: tuple[str, ...] = ()
-    action_interface: str | None = None
-    seed_sha256: str | None = None
-    provider: str | None = None
-    provider_revision: str | None = None
-    tools_sha256: str | None = None
+    action_interface: str
+    seed_sha256: str
+    provider: str
+    provider_revision: str
+    tools: tuple[str, ...]
+    tools_sha256: str
 
     @model_validator(mode="after")
-    def validate_binding(self) -> "HarborEnvironmentConfig":
-        if self.environment == DIRECT_CHAT_ENVIRONMENT:
-            if self.tools or any(
-                value is not None
-                for value in (
-                    self.action_interface,
-                    self.seed_sha256,
-                    self.provider,
-                    self.provider_revision,
-                    self.tools_sha256,
-                )
-            ):
-                raise ValueError("Direct chat cannot bind tools or a provider")
-        elif self.environment == STATEFUL_ENVIRONMENT:
-            if self.provider not in REGISTERED_PROVIDERS:
-                raise ValueError("Unknown stateful provider")
-            if not all((self.action_interface, self.seed_sha256, self.provider_revision, self.tools_sha256)):
-                raise ValueError("Stateful binding requires interface, seed, provider revision, and tools digest")
-            for digest in (self.seed_sha256, self.tools_sha256):
-                if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
-                    raise ValueError("Stateful binding requires lowercase SHA256 digests")
-        else:
-            raise ValueError(f"Unknown Harbor environment: {self.environment}")
+    def validate_binding(self) -> "ToolBinding":
+        if self.provider not in REGISTERED_PROVIDERS:
+            raise ValueError("Unknown tool provider")
+        if not self.action_interface or not self.provider_revision or not self.tools:
+            raise ValueError("Tool binding requires interface, revision, and tools")
+        if len(set(self.tools)) != len(self.tools) or any(not name for name in self.tools):
+            raise ValueError("Tool binding requires unique nonempty tool names")
+        for digest in (self.seed_sha256, self.tools_sha256):
+            if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+                raise ValueError("Tool binding requires lowercase SHA256 digests")
         return self
 
 
-def provider_class(config: HarborEnvironmentConfig) -> type:
-    """Resolve the one registered implementation named by a stateful binding."""
-    if config.provider is None:
-        raise ValueError("Stateful provider is required")
-    module_name, class_name = REGISTERED_PROVIDERS[config.provider].split(":")
+class HarborEnvironmentConfig(BaseModel):
+    """A chat environment with an optional pinned tool surface."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    tool_binding: ToolBinding | None = None
+
+
+def provider_class(binding: ToolBinding) -> type:
+    """Resolve the registered implementation named by a tool binding."""
+    module_name, class_name = REGISTERED_PROVIDERS[binding.provider].split(":")
     return getattr(importlib.import_module(module_name), class_name)
 
 
-def validate_provider_surface(config: HarborEnvironmentConfig) -> None:
+def validate_provider_surface(binding: ToolBinding) -> None:
     """Check provider identity and action schemas before an export or launch."""
-    provider = provider_class(config)
+    provider = provider_class(binding)
     for field, expected in (
-        ("ACTION_INTERFACE", config.action_interface),
-        ("SEED_SHA256", config.seed_sha256),
-        ("PROVIDER_REVISION", config.provider_revision),
+        ("ACTION_INTERFACE", binding.action_interface),
+        ("SEED_SHA256", binding.seed_sha256),
+        ("PROVIDER_REVISION", binding.provider_revision),
     ):
         if getattr(provider, field) != expected:
             raise ValueError(f"Provider {field} differs from Harbor binding")
@@ -105,10 +95,10 @@ def validate_provider_surface(config: HarborEnvironmentConfig) -> None:
     digest = hashlib.sha256(
         json.dumps(definitions, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
     ).hexdigest()
-    if digest != config.tools_sha256:
+    if digest != binding.tools_sha256:
         raise ValueError("Provider tool schemas differ from Harbor binding")
     names = tuple(definition["function"]["name"] for definition in definitions)
-    if names != config.tools or len(set(names)) != len(names):
+    if names != binding.tools or len(set(names)) != len(names):
         raise ValueError("Provider tool names differ from Harbor binding")
 
 
@@ -155,17 +145,10 @@ def select_lowerings(
     candidates: Sequence[LoweringCandidate],
     policy: SelectionPolicy,
     *,
-    required_environment: str | None = None,
     rng_key: int | None = None,
 ) -> tuple[LoweringCandidate, ...]:
-    """Select compatible candidates, honoring an explicit environment request."""
-    if required_environment is not None:
-        candidates = tuple(
-            candidate for candidate in candidates if candidate.environment_config.environment == required_environment
-        )
+    """Select from the caller's compatible lowering candidates."""
     if not candidates:
-        if required_environment is not None:
-            raise ValueError(f"No compatible lowerings for environment {required_environment!r}")
         raise ValueError("No compatible lowerings")
     if policy == SelectionPolicy.SAMPLE:
         if rng_key is None:
@@ -183,23 +166,30 @@ def select_lowerings(
 
 def validate_environment_config(specification: TaskSpec, environment_config: HarborEnvironmentConfig) -> None:
     """Require the selected binding to satisfy the task's semantic requirements."""
-    if environment_config.environment == DIRECT_CHAT_ENVIRONMENT:
-        if specification.requirements.capabilities or specification.requirements.action_interfaces:
-            raise ValueError("Direct chat cannot satisfy capability or action-interface requirements")
+    if (specification.answer_type == AnswerType.STATE) != (specification.verifier.kind == VerifierKind.STATE_MATCH):
+        raise ValueError("State result requires state verifier")
+    binding = environment_config.tool_binding
+    if binding is None:
+        if (
+            specification.requirements.capabilities
+            or specification.requirements.action_interfaces
+            or specification.requirements.seed_sha256 is not None
+        ):
+            raise ValueError("Chat without tools cannot satisfy capability, action-interface, or seed requirements")
         if specification.answer_type == AnswerType.STATE:
-            raise ValueError("Direct chat cannot grade environment state")
+            raise ValueError("Chat without tools cannot grade environment state")
+        if any(resource.visibility == ResourceVisibility.AGENT for resource in specification.resources):
+            raise ValueError("Chat without tools cannot expose agent-visible files")
         return
-    if specification.answer_type != AnswerType.STATE:
-        raise ValueError("Stateful binding requires a state task")
     requirements = specification.requirements
-    if requirements.capabilities or requirements.action_interfaces != (environment_config.action_interface,):
-        raise ValueError("Stateful binding does not satisfy action-interface requirements")
-    if requirements.seed_sha256 != environment_config.seed_sha256:
-        raise ValueError("Stateful binding seed differs from task seed")
-    validate_provider_surface(environment_config)
+    if requirements.capabilities or requirements.action_interfaces != (binding.action_interface,):
+        raise ValueError("Tool binding does not satisfy action-interface requirements")
+    if requirements.seed_sha256 != binding.seed_sha256:
+        raise ValueError("Tool binding seed differs from task seed")
+    validate_provider_surface(binding)
     if any(resource.visibility == ResourceVisibility.AGENT for resource in specification.resources):
-        if not provider_class(environment_config).SUPPORTS_AGENT_FILES:
-            raise ValueError("Stateful provider cannot expose agent-visible files")
+        if not provider_class(binding).SUPPORTS_AGENT_FILES:
+            raise ValueError("Tool provider cannot expose agent-visible files")
 
 
 def read_specification(path: Path) -> TaskSpec:
@@ -271,10 +261,6 @@ def lower_to_harbor(
     validate_environment_config(specification, environment_config)
     validate_verifier(specification.verifier)
     validate_resources(specification.resources, trusted_resolver=trusted_resolver)
-    if environment_config.environment == DIRECT_CHAT_ENVIRONMENT and any(
-        resource.visibility == ResourceVisibility.AGENT for resource in specification.resources
-    ):
-        raise ValueError("Direct chat cannot expose agent-visible files")
     instruction = render_instruction(specification, convention)
     destination.mkdir(parents=True, exist_ok=False)
     (destination / "environment").mkdir()

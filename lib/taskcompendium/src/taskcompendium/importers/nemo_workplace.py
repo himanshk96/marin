@@ -9,7 +9,7 @@ from importlib.resources import files
 from typing import Any, NamedTuple
 
 from taskcompendium.grading import state_match
-from taskcompendium.lowering import STATEFUL_ENVIRONMENT, HarborEnvironmentConfig
+from taskcompendium.lowering import HarborEnvironmentConfig, ToolBinding
 from taskcompendium.models import AnswerType, Source, TaskRequirements, TaskSpec
 from taskcompendium.providers.nemo_workplace.provider import (
     ACTION_INTERFACE,
@@ -45,13 +45,14 @@ class WorkplaceImport(NamedTuple):
 def provider_binding() -> HarborEnvironmentConfig:
     """Select the registered source provider and its immutable tool surface."""
     return HarborEnvironmentConfig(
-        environment=STATEFUL_ENVIRONMENT,
-        action_interface=ACTION_INTERFACE,
-        seed_sha256=SEED_SHA256,
-        provider=PROVIDER,
-        provider_revision=PROVIDER_REVISION,
-        tools_sha256=TOOLS_SHA256,
-        tools=tuple(item["function"]["name"] for item in TOOL_DEFINITIONS),
+        tool_binding=ToolBinding(
+            action_interface=ACTION_INTERFACE,
+            seed_sha256=SEED_SHA256,
+            provider=PROVIDER,
+            provider_revision=PROVIDER_REVISION,
+            tools_sha256=TOOLS_SHA256,
+            tools=tuple(item["function"]["name"] for item in TOOL_DEFINITIONS),
+        ),
     )
 
 

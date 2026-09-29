@@ -4,15 +4,15 @@
 
 Training and evaluation tasks arrive with different prompt formats, answer rules, tools, and graders. TaskCompendium separates the problem a model must solve from the way a framework runs and grades it. A caller can choose among compatible presentations of a task while keeping its reference answer private. Additional Harbor environment configurations can use the same task definition.
 
-The current package supports direct-chat text and number answers and a `STATE` convention for tool-driven tasks. This source integration supplies the NeMo Workplace provider and its registry entry. A state task binds a versioned action interface and seed to that provider. File and native-action result types have no submission convention in this package.
+The current package supports chat text and number answers and a `STATE` convention for tool-driven tasks. A task can bind a versioned action interface and seed to a registered Harbor provider when it needs tools. State grading is separate from that tool choice: a tool-backed task can also submit a text or number answer. The NeMo Workplace source integration supplies its provider and registry entry. File and native-action result types have no submission convention in this package.
 
 ## What does it contain?
 
 - **Task specs** describe the source problem, private resources, required capabilities, the kind of result, and how to verify it.
 - **Submission conventions** describe how to ask for and extract a result, such as a plain answer or a JSON object.
-- **Harbor environment configurations** bind direct chat or a registered stateful provider, including its action interface, seed, implementation revision, and tool schemas.
+- **Harbor environment configurations** provide chat with an optional registered tool binding, including its action interface, seed, implementation revision, and tool schemas.
 - **Lowering tools** find compatible convention and environment configuration pairs, select a pair, and export a runnable Harbor task package.
-- **A Harbor adapter** runs direct chat with replay or an OpenAI-compatible endpoint, and stateful tasks with an endpoint and tools. Harbor orchestrates the agent and environment after lowering.
+- **A Harbor adapter** runs chat without tools using replay or an OpenAI-compatible endpoint, and chat with tools using an endpoint. Harbor orchestrates the agent and environment after lowering.
 
 ```mermaid
 flowchart LR
@@ -49,9 +49,9 @@ The TaskTrove MCQA importer reads archives from a cleaned release. See the [publ
 
 A lowering is one runnable presentation of a spec for a target framework. It combines a compatible submission convention with a Harbor environment configuration, then writes the target's task files. The spec says *what* result is needed; the convention says *how* the model delivers it; the environment configuration says *which capabilities* the environment provides. Agent and model selection happens when the task is launched.
 
-`SubmissionConvention.supports(spec.answer_type)` checks the result kind. `compatible_lowerings` also checks environment requirements and resources; it does not read convention IDs from the spec. Direct chat accepts no action interfaces or agent-visible resources. A stateful binding requires the task's action interface and seed to match a registered provider and its tool schemas. `select_lowerings` can keep all candidates, take the first, or sample one with an explicit RNG key. The order of the caller-supplied convention and environment configuration sequences determines the first candidate and the sample order. A training caller should record those ordered inputs, the selection policy and key, and the TaskCompendium code revision.
+`SubmissionConvention.supports(spec.answer_type)` checks the result kind. `compatible_lowerings` uses that check and the environment requirements; it does not read convention IDs from the spec. Chat without tools accepts tasks without capability or action-interface requirements and rejects `STATE` tasks. A tool binding requires the task's action interface and seed to match a registered provider and its tool schemas. Tool-backed chat can use text, number, or state conventions; state grading additionally requires a `STATE` result and `state_match` verifier. `select_lowerings` can keep all candidates, take the first, or sample one with an explicit RNG key. The order of the caller-supplied convention and environment configuration sequences determines the first candidate and the sample order. A training caller should record those ordered inputs, the selection policy and key, and the TaskCompendium code revision.
 
-An author can require a particular execution environment without changing the semantic `TaskSpec`. Pass `required_environment="stateful"` to `select_lowerings`; it keeps only compatible stateful bindings and raises if none match. The selected environment configuration is recorded in the exported Harbor package.
+An author can select among compatible tool bindings without changing the semantic `TaskSpec`. Pass the desired environment configurations to `compatible_lowerings`; the selected one is recorded in the exported Harbor package.
 
 ```python
 from pathlib import Path
@@ -107,7 +107,7 @@ result = asyncio.run(
 assert result.verifier_result.rewards == {"reward": 1.0}
 ```
 
-For a model run, pass a chat launch to `run_trial` instead. Provide the endpoint's base URL and, if needed, the name of an environment variable containing the API key. The agent reads that variable at request time; the trial configuration retains only its name. A stateful task uses `AgentStrategy.STATEFUL_TOOLS` and explicit turn and timeout limits. Replay launches are rejected for stateful tasks.
+For a model run, pass a chat launch to `run_trial` instead. Provide the endpoint's base URL and, if needed, the name of an environment variable containing the API key. The agent reads that variable at request time; the trial configuration retains only its name. Tool-backed chat uses `AgentStrategy.CHAT_TOOLS` and explicit turn and timeout limits. Replay launches are rejected for tool-backed chat.
 
 ```python
 from taskcompendium.harbor.runner import ChatLaunch
@@ -115,7 +115,7 @@ from taskcompendium.harbor.runner import ChatLaunch
 launch = ChatLaunch(model="model-id", api_base="https://example.com/v1", api_key_env="MODEL_API_KEY")
 ```
 
-Direct chat exposes no filesystem or shell tools. Stateful trials keep one fresh provider instance across tool turns, record call IDs and observations, and stop when the model sends a final message. The state verifier then scores authoritative provider state; the final text is not an answer extraction source. A valid wrong state receives reward `0.0`. Source, tool, and infrastructure failures remain ungraded with a retained trace and a `taskcompendium-result.json` grading status. The package pins Harbor's [custom-verifier task loading](https://github.com/marin-community/harbor/pull/155).
+Harbor runs chat agents with or without tools. For tool-backed chat, the selected provider maintains fresh trial state across tool turns. The agent records call IDs, actions, and observations in order. Its final message ends the interaction; a `state_match` verifier grades the provider's final state, while an answer verifier grades the final message. The custom verifier selects the private verifier kind through an explicit map. A valid but wrong answer or state receives reward `0.0`. Source, tool, and infrastructure failures remain ungraded; Harbor retains the trial trace, and `taskcompendium-result.json` records the grading status. The provider may be in-process or have a separate runtime; Docker is independent of the tool and grading contracts. This package pins Harbor's [custom-verifier task loading](https://github.com/marin-community/harbor/pull/155).
 
 ### NeMo Workplace row 0
 
