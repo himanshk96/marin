@@ -235,7 +235,7 @@ class StatefulToolAgent(DirectChatAgent):
 
 
 class SemanticVerifier(BaseVerifier):
-    """Grade the submitted answer against the task's private reference."""
+    """Grade the submitted answer or provider state against the private reference."""
 
     async def verify(self) -> VerifierResult:
         try:
