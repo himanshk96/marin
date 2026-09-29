@@ -13,12 +13,11 @@ from typing import Any
 from harbor.environments.docker.docker import DockerEnvironment
 
 from taskcompendium.harbor.snapshot import download_snapshot
-from taskcompendium.resources import validate_resource_path
+from taskcompendium.resources import SHA256_PATTERN, validate_resource_path
 
 ACTION_INTERFACE = "docker_shell:v1"
 PROVIDER_REVISION = "docker_shell:v1"
 IMAGE_DIGEST = re.compile(r"^[^\s@]+@sha256:([0-9a-f]{64})$")
-SHA256 = re.compile(r"^[0-9a-f]{64}$")
 TOOL_DEFINITIONS = (
     {
         "type": "function",
@@ -92,7 +91,7 @@ class DockerShellEnvironment(DockerEnvironment):
     async def native_tool_definitions(self) -> list[dict[str, Any]]:
         return deepcopy(list(self.TOOL_DEFINITIONS))
 
-    async def dispatch_action(self, name: str, arguments: str, call_id: str) -> str:
+    async def dispatch_action(self, name: str, arguments: str, _call_id: str) -> str:
         """Run one valid shell call; command failures remain tool observations."""
         try:
             payload = json.loads(arguments)
@@ -118,7 +117,7 @@ class DockerShellEnvironment(DockerEnvironment):
             raise ValueError("Docker expected state must name at least one file")
         workdir = _workdir(self.task_env_config.workdir)
         for relative, digest in files.items():
-            if not isinstance(relative, str) or not isinstance(digest, str) or SHA256.fullmatch(digest) is None:
+            if not isinstance(relative, str) or not isinstance(digest, str) or SHA256_PATTERN.fullmatch(digest) is None:
                 raise ValueError("Docker expected state contains an invalid path or SHA256")
             path = validate_resource_path(relative)
             # Refuse symlinks in every path component before inspecting contents.
@@ -143,7 +142,7 @@ class DockerShellEnvironment(DockerEnvironment):
             if result.return_code != 0:
                 raise RuntimeError(f"Docker state hash failed for {relative!r}: {result.stderr or result.stdout}")
             actual = (result.stdout or "").split(maxsplit=1)[0]
-            if SHA256.fullmatch(actual) is None:
+            if SHA256_PATTERN.fullmatch(actual) is None:
                 raise RuntimeError(f"Docker state hash was malformed for {relative!r}")
             if actual != digest:
                 return 0.0

@@ -9,19 +9,14 @@ import subprocess
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Protocol
 
 from taskcompendium.grading import GradeResult, Outcome
+from taskcompendium.harbor.docker import DockerShellEnvironment
+from taskcompendium.lowering import PRIVATE_RESOURCES_DIR
 from taskcompendium.models import TaskSpec, VerifierKind
 from taskcompendium.resources import ResourceVisibility
 from taskcompendium.verifier_registry import resolve_verifier
 from taskcompendium.verifiers.private_command import PrivateCommandVerifier
-
-PRIVATE_RESOURCES_DIR = "private_resources"
-
-
-class WorkspaceSnapshot(Protocol):
-    async def snapshot_workspace(self, destination: Path, excluded_paths: tuple[str, ...] = ()) -> None: ...
 
 
 def _run_verifier(verifier: PrivateCommandVerifier, workspace: Path, private_resources: Path) -> GradeResult:
@@ -98,8 +93,10 @@ def _run_verifier(verifier: PrivateCommandVerifier, workspace: Path, private_res
     return result
 
 
-async def grade_private_command(specification: TaskSpec, environment: WorkspaceSnapshot, task_dir: Path) -> GradeResult:
-    """Snapshot the candidate once, then run a private executable off-trial."""
+async def grade_private_command(
+    specification: TaskSpec, environment: DockerShellEnvironment, task_dir: Path
+) -> GradeResult:
+    """Grade submitted Docker state without exposing private checks to the agent."""
     if specification.verifier.kind != VerifierKind.PRIVATE_COMMAND:
         raise ValueError("Task does not select a private command verifier")
     verifier = resolve_verifier(specification.verifier)

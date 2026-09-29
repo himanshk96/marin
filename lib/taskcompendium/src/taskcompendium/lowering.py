@@ -104,7 +104,6 @@ class HarborEnvironmentConfig(BaseModel):
 
 
 def provider_class(binding: ToolBinding) -> type:
-    """Resolve the registered implementation named by a tool binding."""
     return provider_class_for_name(binding.provider)
 
 
@@ -112,6 +111,13 @@ def provider_class_for_name(name: str) -> type:
     """Resolve a registered provider without accepting arbitrary import paths."""
     module_name, class_name = REGISTERED_PROVIDERS[name].split(":")
     return getattr(importlib.import_module(module_name), class_name)
+
+
+def tool_schema_digest(definitions: tuple[dict, ...]) -> str:
+    """Hash the ordered JSON tool surface used by a Harbor binding."""
+    return hashlib.sha256(
+        json.dumps(definitions, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
 
 
 def validate_provider_surface(binding: ToolBinding, docker_runtime: DockerRuntimeBinding | None = None) -> None:
@@ -131,9 +137,7 @@ def validate_provider_surface(binding: ToolBinding, docker_runtime: DockerRuntim
         if getattr(provider, field) != expected:
             raise ValueError(f"Provider {field} differs from Harbor binding")
     definitions = provider.TOOL_DEFINITIONS
-    digest = hashlib.sha256(
-        json.dumps(definitions, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
-    ).hexdigest()
+    digest = tool_schema_digest(definitions)
     if digest != binding.tools_sha256:
         raise ValueError("Provider tool schemas differ from Harbor binding")
     names = tuple(definition["function"]["name"] for definition in definitions)
@@ -145,9 +149,7 @@ def docker_shell_binding(runtime: DockerRuntimeBinding) -> ToolBinding:
     """Bind the registered shell tool surface to one pinned Docker image."""
     provider = provider_class_for_name(DOCKER_SHELL_PROVIDER)
     definitions = provider.TOOL_DEFINITIONS
-    digest = hashlib.sha256(
-        json.dumps(definitions, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
-    ).hexdigest()
+    digest = tool_schema_digest(definitions)
     return ToolBinding(
         action_interface=provider.ACTION_INTERFACE,
         seed_sha256=runtime.image_sha256,

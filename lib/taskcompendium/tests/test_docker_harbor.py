@@ -27,29 +27,30 @@ def _source() -> Source:
     return Source(dataset="docker-contract", revision="1", row="workspace", importer_revision="1")
 
 
-def _specification(
-    runtime: DockerRuntimeBinding,
-    *,
-    state: bool,
-    resources: tuple[TaskResource, ...] = (),
-) -> TaskSpec:
-    requirements = TaskRequirements(
-        capabilities=("filesystem", "shell"),
-        action_interfaces=("docker_shell:v1",) if state else (),
-        seed_sha256=runtime.image_sha256,
-    )
-    verifier = (
-        state_match(json.dumps({"files": {"answer.txt": hashlib.sha256(b"good\n").hexdigest()}}))
-        if state
-        else exact_answer("12")
-    )
+def _state_specification(runtime: DockerRuntimeBinding, resources: tuple[TaskResource, ...] = ()) -> TaskSpec:
     return TaskSpec(
         id="docker-workspace",
         instructions="Use the workspace to complete the task.",
-        verifier=verifier,
+        verifier=state_match(json.dumps({"files": {"answer.txt": hashlib.sha256(b"good\n").hexdigest()}})),
         source=_source(),
-        requirements=requirements,
-        answer_type=AnswerType.STATE if state else AnswerType.NUMBER,
+        requirements=TaskRequirements(
+            capabilities=("filesystem", "shell"),
+            action_interfaces=("docker_shell:v1",),
+            seed_sha256=runtime.image_sha256,
+        ),
+        answer_type=AnswerType.STATE,
+        resources=resources,
+    )
+
+
+def _direct_specification(runtime: DockerRuntimeBinding, resources: tuple[TaskResource, ...] = ()) -> TaskSpec:
+    return TaskSpec(
+        id="docker-workspace",
+        instructions="Use the workspace to complete the task.",
+        verifier=exact_answer("12"),
+        source=_source(),
+        requirements=TaskRequirements(capabilities=("filesystem", "shell"), seed_sha256=runtime.image_sha256),
+        answer_type=AnswerType.NUMBER,
         resources=resources,
     )
 
@@ -69,7 +70,7 @@ def _docker_image() -> DockerRuntimeBinding:
 def test_docker_image_and_tool_surface_must_match_task_before_export(tmp_path):
     first = DockerRuntimeBinding(image=f"example/a@sha256:{'a' * 64}", workdir="/app")
     second = DockerRuntimeBinding(image=f"example/b@sha256:{'b' * 64}", workdir="/app")
-    specification = _specification(first, state=True)
+    specification = _state_specification(first)
     environment_config = HarborEnvironmentConfig(tool_binding=docker_shell_binding(first), docker_runtime=second)
 
     with pytest.raises(ValueError, match=r"seed|digest"):
@@ -84,9 +85,8 @@ def test_docker_image_and_tool_surface_must_match_task_before_export(tmp_path):
 
 def test_direct_chat_docker_still_rejects_agent_files(tmp_path):
     runtime = DockerRuntimeBinding(image=f"example/a@sha256:{'a' * 64}", workdir="/app")
-    specification = _specification(
+    specification = _direct_specification(
         runtime,
-        state=False,
         resources=(TaskResource(path="input.txt", visibility=ResourceVisibility.AGENT, content="hidden"),),
     )
 
@@ -103,7 +103,7 @@ def test_direct_chat_docker_still_rejects_agent_files(tmp_path):
 @pytest.mark.parametrize("tamper", ["image", "undeclared_file", "symlink"])
 async def test_docker_launch_rechecks_exported_runtime_before_start(tmp_path, tamper):
     runtime = DockerRuntimeBinding(image=f"example/a@sha256:{'a' * 64}", workdir="/app")
-    specification = _specification(runtime, state=True)
+    specification = _state_specification(runtime)
     environment_config = HarborEnvironmentConfig(tool_binding=docker_shell_binding(runtime), docker_runtime=runtime)
     task = lower_to_harbor(
         specification,
@@ -205,7 +205,7 @@ def scripted_endpoint():
 @pytest.mark.timeout(180)
 async def test_docker_direct_chat_uses_runtime_without_tools(tmp_path, scripted_endpoint):
     runtime = _docker_image()
-    specification = _specification(runtime, state=False)
+    specification = _direct_specification(runtime)
     environment_config = HarborEnvironmentConfig(docker_runtime=runtime)
     task = lower_to_harbor(
         specification,
@@ -237,7 +237,7 @@ async def test_docker_shell_grades_live_state_and_isolates_concurrent_trials(tmp
         TaskResource(path="seed.txt", visibility=ResourceVisibility.AGENT, content="seed\n"),
         TaskResource(path="private.txt", visibility=ResourceVisibility.VERIFIER, content="gold\n"),
     )
-    specification = _specification(runtime, state=True, resources=resources)
+    specification = _state_specification(runtime, resources=resources)
     environment_config = HarborEnvironmentConfig(tool_binding=docker_shell_binding(runtime), docker_runtime=runtime)
     task = lower_to_harbor(
         specification,

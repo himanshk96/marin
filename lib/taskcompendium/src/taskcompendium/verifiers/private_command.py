@@ -40,7 +40,7 @@ class PrivateCommandVerifier(Verifier):
             raise ValueError("Verifier arguments cannot contain NUL")
         return self
 
-    def grade(self, attempt: GradingAttempt) -> GradeResult:
+    def grade(self, _attempt: GradingAttempt) -> GradeResult:
         raise RuntimeError("Private command grading requires an isolated Docker verifier")
 
 
