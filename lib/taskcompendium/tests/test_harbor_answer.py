@@ -17,7 +17,6 @@ from harbor.models.task.task import Task
 from taskcompendium.grading import exact_answer
 from taskcompendium.harbor.runner import AgentStrategy, ChatLaunch, ReplayLaunch, run_trial
 from taskcompendium.lowering import (
-    DIRECT_CHAT_ENVIRONMENT,
     HarborEnvironmentConfig,
     SelectionPolicy,
     compatible_lowerings,
@@ -223,7 +222,7 @@ async def test_harbor_rejects_launch_strategy_that_cannot_use_binding(tmp_path, 
         await run_trial(
             task,
             binding,
-            ChatLaunch(model="fixture-model", api_base=chat_endpoint.url, strategy=AgentStrategy.STATEFUL_TOOLS),
+            ChatLaunch(model="fixture-model", api_base=chat_endpoint.url, strategy=AgentStrategy.CHAT_TOOLS),
             tmp_path / "trials",
             "run",
         )
@@ -347,11 +346,6 @@ def test_selection_policies_use_compatible_conventions(specification):
     repeated = [select_lowerings(candidates, SelectionPolicy.SAMPLE, rng_key=42) for _ in range(10)]
     assert all(selection == repeated[0] for selection in repeated)
     assert {select_lowerings(candidates, SelectionPolicy.SAMPLE, rng_key=key)[0] for key in range(16)} == set(candidates)
-    assert select_lowerings(candidates, SelectionPolicy.FIRST, required_environment=DIRECT_CHAT_ENVIRONMENT) == (
-        candidates[0],
-    )
-    with pytest.raises(ValueError, match="No compatible lowerings for environment 'shellsim'"):
-        select_lowerings(candidates, SelectionPolicy.FIRST, required_environment="shellsim")
 
 
 async def test_chat_trial_resolves_key_at_runtime_without_persisting_it(

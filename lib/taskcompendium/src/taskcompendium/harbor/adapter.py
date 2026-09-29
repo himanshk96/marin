@@ -1,7 +1,7 @@
 # Copyright The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""Harbor runtime for direct-chat answers and stateful tool tasks."""
+"""Harbor runtime for chat answers with optional provider tools."""
 
 import asyncio
 import json
@@ -173,7 +173,7 @@ class DirectChatAgent(BaseAgent):
         _record_response(self.logs_dir, instruction, response, context)
 
 
-class StatefulToolAgent(DirectChatAgent):
+class ChatToolAgent(DirectChatAgent):
     """Run an ordered tool conversation against one mutable Harbor environment."""
 
     def __init__(self, *args, max_turns: int, **kwargs):
@@ -182,19 +182,21 @@ class StatefulToolAgent(DirectChatAgent):
 
     @staticmethod
     def name() -> str:
-        return "taskcompendium-stateful-tools"
+        return "taskcompendium-chat-tools"
 
     def _message(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> dict[str, Any]:
         body = {"model": self.model_name, "messages": messages, "tools": tools}
         message = _chat_completion(self.api_base, self.api_key_env, self.request_timeout, body)
         if not isinstance(message, dict) or message.get("role") != "assistant":
-            raise ValueError("Stateful completion requires an assistant message")
+            raise ValueError("Tool completion requires an assistant message")
         return message
 
     async def run(self, instruction: str, environment: BaseEnvironment, context: AgentContext) -> None:
         tools = await environment.native_tool_definitions()
         binding = read_environment_config(environment.environment_dir.parent / ENVIRONMENT_CONFIG_FILE)
-        validate_provider_surface(binding)
+        if binding.tool_binding is None:
+            raise ValueError("Tool agent requires a tool binding")
+        validate_provider_surface(binding.tool_binding)
         if tools != list(type(environment).TOOL_DEFINITIONS):
             raise ValueError("Runtime tool surface differs from exported binding")
         messages: list[dict[str, Any]] = [{"role": "user", "content": instruction}]
@@ -215,7 +217,7 @@ class StatefulToolAgent(DirectChatAgent):
             }
             if not calls:
                 if not isinstance(message.get("content"), str):
-                    raise ValueError("Stateful completion requires tool calls or a textual final message")
+                    raise ValueError("Tool completion requires tool calls or a textual final message")
                 (self.logs_dir / RESPONSE_FILE).write_text(message["content"])
                 return
             for call in calls:
@@ -231,7 +233,7 @@ class StatefulToolAgent(DirectChatAgent):
                 actions.append({"call_id": call_id, "name": name, "arguments": arguments, "observation": observation})
                 messages.append({"role": "tool", "tool_call_id": call_id, "content": observation})
                 context.metadata["all_messages"] = messages
-        raise RuntimeError(f"Stateful agent exhausted {self.max_turns} turns")
+        raise RuntimeError(f"Tool agent exhausted {self.max_turns} turns")
 
 
 class SemanticVerifier(BaseVerifier):

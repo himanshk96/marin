@@ -64,7 +64,7 @@ class TaskRequirements(BaseModel):
     """Environment functionality required to run the task.
 
     ``capabilities`` contains generic operations such as ``filesystem`` or
-    ``shell``. ``action_interfaces`` contains named stateful tool surfaces such
+    ``shell``. ``action_interfaces`` contains named tool surfaces such
     as ``workplace:v1``.
     """
 

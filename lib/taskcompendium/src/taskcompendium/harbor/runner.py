@@ -13,10 +13,8 @@ from harbor.trial.trial import Trial
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from taskcompendium.lowering import (
-    DIRECT_CHAT_ENVIRONMENT,
     ENVIRONMENT_CONFIG_FILE,
     SPECIFICATION_FILE,
-    STATEFUL_ENVIRONMENT,
     SUBMISSION_CONVENTION_FILE,
     HarborEnvironmentConfig,
     provider_class,
@@ -26,14 +24,13 @@ from taskcompendium.lowering import (
     validate_environment_config,
     validate_exported_resources,
 )
-from taskcompendium.submission import AnswerFormat
 
 DEFAULT_CHAT_TIMEOUT = 120
 
 
 class AgentStrategy(StrEnum):
     DIRECT_CHAT = "direct_chat"
-    STATEFUL_TOOLS = "stateful_tools"
+    CHAT_TOOLS = "chat_tools"
 
 
 class ReplayLaunch(BaseModel):
@@ -81,43 +78,41 @@ async def run_trial(
     try:
         convention = read_submission_convention(task_dir / SUBMISSION_CONVENTION_FILE)
     except (ValueError, ValidationError):
-        if not isinstance(launch, ReplayLaunch) or environment_config.environment != DIRECT_CHAT_ENVIRONMENT:
+        if not isinstance(launch, ReplayLaunch) or environment_config.tool_binding is not None:
             raise
         convention = None  # The verifier records invalid private metadata as an ungraded outcome.
-    stateful = environment_config.environment == STATEFUL_ENVIRONMENT
-    if convention is not None and stateful != (convention.answer_format == AnswerFormat.STATE):
-        raise ValueError("Submission convention differs from environment binding")
+    tool_binding = environment_config.tool_binding
+    if convention is not None and not convention.supports(specification.answer_type):
+        raise ValueError("Submission convention differs from answer type")
     if isinstance(launch, ReplayLaunch):
-        if stateful:
-            raise ValueError("Stateful tasks require a model endpoint")
+        if tool_binding is not None:
+            raise ValueError("Tool tasks require a model endpoint")
         agent: dict[str, Any] = {
             "import_path": "taskcompendium.harbor.adapter:ReplayAgent",
             "kwargs": launch.model_dump(),
         }
     else:
-        expected_strategy = AgentStrategy.STATEFUL_TOOLS if stateful else AgentStrategy.DIRECT_CHAT
+        expected_strategy = AgentStrategy.CHAT_TOOLS if tool_binding is not None else AgentStrategy.DIRECT_CHAT
         if launch.strategy != expected_strategy:
             raise ValueError("Agent strategy differs from Harbor environment binding")
         agent_path = "taskcompendium.harbor.adapter:DirectChatAgent"
         kwargs = launch.agent_kwargs
-        if stateful:
-            agent_path = "taskcompendium.harbor.adapter:StatefulToolAgent"
+        if tool_binding is not None:
+            agent_path = "taskcompendium.harbor.adapter:ChatToolAgent"
             kwargs["max_turns"] = launch.max_turns
         agent = {
             "import_path": agent_path,
             "model_name": launch.model,
             "kwargs": kwargs,
         }
-    if environment_config.environment == DIRECT_CHAT_ENVIRONMENT:
+    if tool_binding is None:
         environment = {"import_path": "taskcompendium.harbor.adapter:NoToolEnvironment"}
     else:
         environment = {
-            "import_path": (
-                f"{provider_class(environment_config).__module__}:{provider_class(environment_config).__name__}"
-            ),
+            "import_path": f"{provider_class(tool_binding).__module__}:{provider_class(tool_binding).__name__}",
             "kwargs": {
-                "seed_sha256": environment_config.seed_sha256,
-                "action_interface": environment_config.action_interface,
+                "seed_sha256": tool_binding.seed_sha256,
+                "action_interface": tool_binding.action_interface,
             },
         }
     config = TrialConfig.model_validate(
