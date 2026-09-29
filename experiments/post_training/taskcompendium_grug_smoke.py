@@ -58,6 +58,7 @@ MAX_STEPS = 1
 MAX_TURNS = 3
 # Row 0's first prompt is 4,222 tokens with its 27 tools and this tokenizer.
 REQUEST_WINDOW_TOKENS = 8192
+OPTIMIZER_OFFLOAD_FRACTION = 0.5
 
 ROLE_PLAN = SkyRLRolePlan(
     colocate_all=True,
@@ -190,6 +191,11 @@ trainer:
       context_parallel_size: 1
       expert_model_parallel_size: {GPUS_PER_NODE}
       expert_tensor_parallel_size: 1
+      optimizer_config_kwargs:
+        optimizer_cpu_offload: true
+        optimizer_offload_fraction: {OPTIMIZER_OFFLOAD_FRACTION}
+        overlap_cpu_optimizer_d2h_h2d: true
+        use_precision_aware_optimizer: true
   ref:
     megatron_config:
       tensor_model_parallel_size: 1
