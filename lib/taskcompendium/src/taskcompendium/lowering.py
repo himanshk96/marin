@@ -36,11 +36,7 @@ SUBMISSION_CONVENTION_FILE = "submission_convention.json"
 ENVIRONMENT_CONFIG_FILE = "environment_config.json"
 AGENT_RESOURCES_DIR = "inputs"
 PRIVATE_RESOURCES_DIR = "private_resources"
-REGISTERED_PROVIDERS: Mapping[str, str] = MappingProxyType(
-    {
-        "nemo_workplace:v1": "taskcompendium.providers.nemo_workplace.provider:NemoWorkplaceEnvironment",
-    }
-)
+REGISTERED_PROVIDERS: Mapping[str, str] = MappingProxyType({})
 
 
 class HarborEnvironmentConfig(BaseModel):
