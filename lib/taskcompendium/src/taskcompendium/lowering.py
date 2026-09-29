@@ -1,7 +1,7 @@
 # Copyright The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""Export a direct-chat TaskSpec submission as a Harbor task package."""
+"""Export a TaskSpec submission as a Harbor task package."""
 
 import hashlib
 import importlib

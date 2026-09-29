@@ -12,7 +12,7 @@ from typing import Protocol, runtime_checkable
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from taskcompendium.models import VerifierKind, VerifierSpec
-from taskcompendium.submission import SubmissionConvention, extract_answer
+from taskcompendium.submission import AnswerFormat, SubmissionConvention, extract_answer
 
 WHITESPACE = re.compile(r"\s+")
 
@@ -83,7 +83,7 @@ class StateMatchVerifier(Verifier):
     expected_state_json: str
 
     def grade(self, attempt: GradingAttempt) -> GradeResult:
-        if attempt.convention.answer_format.value != "state":
+        if attempt.convention.answer_format != AnswerFormat.STATE:
             raise ValueError("State grading requires a state submission convention")
         if not isinstance(attempt.environment, StateGrader):
             raise TypeError("State verifier requires a stateful provider")
