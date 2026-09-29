@@ -1,7 +1,7 @@
 # Copyright The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""Private semantics for one deterministic, single-turn answer task."""
+"""Private task semantics for answer and state-graded tasks."""
 
 from enum import StrEnum
 

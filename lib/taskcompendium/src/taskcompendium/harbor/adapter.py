@@ -1,7 +1,7 @@
 # Copyright The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""Minimal Harbor runtime for direct-chat answer tasks."""
+"""Harbor runtime for direct-chat answers and stateful tool tasks."""
 
 import asyncio
 import json
