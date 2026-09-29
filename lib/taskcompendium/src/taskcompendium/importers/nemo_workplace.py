@@ -6,10 +6,10 @@
 import hashlib
 import json
 from importlib.resources import files
-from typing import Any
+from typing import Any, NamedTuple
 
 from taskcompendium.grading import state_match
-from taskcompendium.lowering import HarborEnvironmentConfig
+from taskcompendium.lowering import STATEFUL_ENVIRONMENT, HarborEnvironmentConfig
 from taskcompendium.models import AnswerType, Source, TaskRequirements, TaskSpec
 from taskcompendium.providers.nemo_workplace.provider import (
     ACTION_INTERFACE,
@@ -36,10 +36,16 @@ SOURCE_PROVENANCE_PATH = "source-provenance.json"
 PROVIDER = "nemo_workplace:v1"
 
 
+class WorkplaceImport(NamedTuple):
+    specification: TaskSpec
+    convention: SubmissionConvention
+    binding: HarborEnvironmentConfig
+
+
 def provider_binding() -> HarborEnvironmentConfig:
     """Select the registered source provider and its immutable tool surface."""
     return HarborEnvironmentConfig(
-        environment="stateful",
+        environment=STATEFUL_ENVIRONMENT,
         action_interface=ACTION_INTERFACE,
         seed_sha256=SEED_SHA256,
         provider=PROVIDER,
@@ -77,7 +83,7 @@ def _gold(value: Any) -> list[dict[str, str]]:
     return actions
 
 
-def import_row(data: bytes) -> tuple[TaskSpec, SubmissionConvention, HarborEnvironmentConfig]:
+def import_row(data: bytes) -> WorkplaceImport:
     """Import the raw row after checking its digest, source tools, and seed."""
     if hashlib.sha256(data).hexdigest() != ROW_SHA256:
         raise ValueError("Workplace row 0 does not match its pinned raw digest")
@@ -131,9 +137,11 @@ def import_row(data: bytes) -> tuple[TaskSpec, SubmissionConvention, HarborEnvir
             ),
         ),
     )
-    return specification, SubmissionConvention(id="state", answer_format=AnswerFormat.STATE), provider_binding()
+    return WorkplaceImport(
+        specification, SubmissionConvention(id="state", answer_format=AnswerFormat.STATE), provider_binding()
+    )
 
 
-def load_fixture() -> tuple[TaskSpec, SubmissionConvention, HarborEnvironmentConfig]:
+def load_fixture() -> WorkplaceImport:
     """Return a runnable row 0 task from data included in the installed wheel."""
     return import_row(files("taskcompendium.importers").joinpath("data/workplace-0.json").read_bytes())

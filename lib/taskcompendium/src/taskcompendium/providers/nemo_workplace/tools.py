@@ -6,7 +6,6 @@
 
 """Pinned NVIDIA tool registry, with only its package import paths adapted."""
 
-import json
 from typing import Any
 
 from taskcompendium.providers.nemo_workplace.vendor.workplace_assistant_tools.analytics import (
@@ -32,7 +31,7 @@ from taskcompendium.providers.nemo_workplace.vendor.workplace_assistant_tools.pr
 )
 
 TOOLKITS = ("email", "calendar", "analytics", "project_management", "customer_relationship_manager")
-_CASE_SENSITIVE_COLUMNS = frozenset({"status", "list_name", "board"})
+CASE_SENSITIVE_COLUMNS = frozenset({"status", "list_name", "board"})
 
 
 def get_tools() -> dict[str, Any]:
@@ -101,17 +100,6 @@ def get_tools() -> dict[str, Any]:
     return tool_env
 
 
-def execute_actions(actions: list[dict[str, str]]) -> dict[str, Any]:
-    """Replay source-format actions, retaining the source's error-and-continue behavior."""
-    tool_env = get_tools()
-    for action in actions:
-        try:
-            tool_env["functions"][action["name"]](**json.loads(action["arguments"]))
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-            continue
-    return tool_env
-
-
 def source_state(tool_env: dict[str, Any]) -> dict[str, Any]:
     """Read exactly the mutable tables used by the upstream state comparator."""
     return {
@@ -123,16 +111,3 @@ def source_state(tool_env: dict[str, Any]) -> dict[str, Any]:
             tool_env["containers"]["customer_relationship_manager"]._crm_data.copy(deep=True)
         ),
     }
-
-
-def equivalent_state(first: dict[str, Any], second: dict[str, Any]) -> bool:
-    """Apply the source's case-insensitive comparison before checking all mutable tables."""
-    for name in first:
-        left, right = first[name].copy(deep=True), second[name].copy(deep=True)
-        for frame in (left, right):
-            for column in frame.columns:
-                if column not in _CASE_SENSITIVE_COLUMNS:
-                    frame[column] = frame[column].str.lower()
-        if not left.equals(right):
-            return False
-    return True
