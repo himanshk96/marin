@@ -5,13 +5,14 @@
 
 import hashlib
 import json
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
 from harbor.environments.base import BaseEnvironment, ExecResult
 from harbor.environments.capabilities import EnvironmentCapabilities
 
-from taskcompendium.providers.nemo_workplace.tools import get_tools, source_state
+from taskcompendium.providers.nemo_workplace.tools import CASE_SENSITIVE_COLUMNS, get_tools, source_state
 
 ACTION_INTERFACE = "workplace:v1"
 SEED_SHA256 = "abcfd3d4727c66b6dfc145b59f720b819ac9de1b65df285cd30bc80bc10b3b8b"
@@ -62,7 +63,7 @@ def state_snapshot(tool_env: dict[str, Any]) -> dict[str, Any]:
     for name, original in source_state(tool_env).items():
         frame = original.copy(deep=True)
         for column in frame.columns:
-            if column not in {"status", "list_name", "board"}:
+            if column not in CASE_SENSITIVE_COLUMNS:
                 frame[column] = frame[column].str.lower()
         snapshot[name] = json.loads(frame.to_json(orient="split"))
     return snapshot
@@ -152,7 +153,7 @@ class NemoWorkplaceEnvironment(BaseEnvironment):
             raise ValueError("Workplace provider does not expose filesystem downloads")
 
     async def native_tool_definitions(self) -> list[dict[str, Any]]:
-        return list(self.TOOL_DEFINITIONS)
+        return deepcopy(list(self.TOOL_DEFINITIONS))
 
     async def dispatch_action(self, name: str, arguments: str, call_id: str) -> str:
         try:

@@ -4,7 +4,7 @@
 
 Training and evaluation tasks arrive with different prompt formats, answer rules, tools, and graders. TaskCompendium separates the problem a model must solve from the way a framework runs and grades it. A caller can choose among compatible presentations of a task while keeping its reference answer private. Additional Harbor environment configurations can use the same task definition.
 
-The current implementation supports direct-chat text and number answers and a stateful Workplace tool task. Both export Harbor tasks and grade through private verifiers. File and native-action result types remain outside these lowerings.
+The current package supports direct-chat text and number answers and a `STATE` convention for tool-driven tasks. This source integration supplies the NeMo Workplace provider and its registry entry. A state task binds a versioned action interface and seed to that provider. File and native-action result types have no submission convention in this package.
 
 ## What does it contain?
 
