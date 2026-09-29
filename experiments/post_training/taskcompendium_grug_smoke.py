@@ -255,7 +255,7 @@ def smoke_step(packages: ArtifactStep[Artifact], runtime_commit: str, version: s
             cluster=CLUSTER,
             cluster_config=f"lib/iris/config/{CLUSTER}.yaml",
             cpu=32,
-            memory="512GB",
+            memory="1024GB",
             disk="500GB",
             priority="interactive",
             max_retries=0,
