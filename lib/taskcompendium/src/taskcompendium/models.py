@@ -1,7 +1,7 @@
 # Copyright The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""Private semantics for one deterministic, single-turn answer task."""
+"""Private task semantics for answer and state-graded tasks."""
 
 from enum import StrEnum
 
@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from taskcompendium.resources import SHA256_PATTERN, TaskResource, validate_resource_paths
 
-SCHEMA_VERSION = "0.5"
+SCHEMA_VERSION = "0.7"
 
 
 class AnswerType(StrEnum):
@@ -27,6 +27,7 @@ class VerifierKind(StrEnum):
 
     EXACT_ANSWER = "exact_answer"
     STATE_MATCH = "state_match"
+    MCQ_ANSWER = "mcq_answer"
 
 
 class Source(BaseModel):
