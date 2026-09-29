@@ -13,15 +13,18 @@ from harbor.trial.trial import Trial
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from taskcompendium.lowering import (
+    DOCKER_SHELL_PROVIDER,
     ENVIRONMENT_CONFIG_FILE,
     SPECIFICATION_FILE,
     SUBMISSION_CONVENTION_FILE,
     HarborEnvironmentConfig,
     provider_class,
+    provider_class_for_name,
     read_environment_config,
     read_specification,
     read_submission_convention,
     validate_environment_config,
+    validate_exported_docker_runtime,
     validate_exported_resources,
 )
 
@@ -75,6 +78,7 @@ async def run_trial(
     specification = read_specification(task_dir / SPECIFICATION_FILE)
     validate_environment_config(specification, environment_config)
     validate_exported_resources(specification, task_dir)
+    validate_exported_docker_runtime(specification, environment_config, task_dir)
     try:
         convention = read_submission_convention(task_dir / SUBMISSION_CONVENTION_FILE)
     except (ValueError, ValidationError):
@@ -105,7 +109,16 @@ async def run_trial(
             "model_name": launch.model,
             "kwargs": kwargs,
         }
-    if tool_binding is None:
+    if environment_config.docker_runtime is not None:
+        provider = provider_class_for_name(DOCKER_SHELL_PROVIDER)
+        environment = {
+            "import_path": f"{provider.__module__}:{provider.__name__}",
+            "kwargs": {
+                "seed_sha256": environment_config.docker_runtime.image_sha256,
+                "action_interface": provider.ACTION_INTERFACE,
+            },
+        }
+    elif tool_binding is None:
         environment = {"import_path": "taskcompendium.harbor.adapter:NoToolEnvironment"}
     else:
         environment = {

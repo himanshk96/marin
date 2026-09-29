@@ -44,6 +44,11 @@ class StateGrader(Protocol):
     def grade_state(self, expected_state_json: str) -> float: ...
 
 
+@runtime_checkable
+class AsyncStateGrader(Protocol):
+    async def grade_state_async(self, expected_state_json: str) -> float: ...
+
+
 class Verifier(BaseModel, ABC):
     """Validated private configuration that grades one submission."""
 

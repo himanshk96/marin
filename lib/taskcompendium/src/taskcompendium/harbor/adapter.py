@@ -18,7 +18,9 @@ from harbor.models.agent.context import AgentContext
 from harbor.models.verifier.result import VerifierResult
 from harbor.verifier.base import BaseVerifier
 
-from taskcompendium.grading import GradeResult, Outcome
+from taskcompendium.grading import AsyncStateGrader, GradeResult, Outcome, StateMatchVerifier
+from taskcompendium.harbor.docker import DockerShellEnvironment
+from taskcompendium.harbor.private_command import grade_private_command
 from taskcompendium.lowering import (
     AGENT_RESOURCES_DIR,
     ENVIRONMENT_CONFIG_FILE,
@@ -29,8 +31,9 @@ from taskcompendium.lowering import (
     read_submission_convention,
     validate_provider_surface,
 )
+from taskcompendium.models import VerifierKind
 from taskcompendium.submission import AnswerFormat
-from taskcompendium.verifier_registry import grade_answer
+from taskcompendium.verifier_registry import grade_answer, resolve_verifier
 
 RESPONSE_FILE = "response.txt"
 CHAT_COMPLETIONS_PATH = "/chat/completions"
@@ -196,7 +199,7 @@ class ChatToolAgent(DirectChatAgent):
         binding = read_environment_config(environment.environment_dir.parent / ENVIRONMENT_CONFIG_FILE)
         if binding.tool_binding is None:
             raise ValueError("Tool agent requires a tool binding")
-        validate_provider_surface(binding.tool_binding)
+        validate_provider_surface(binding.tool_binding, binding.docker_runtime)
         if tools != list(type(environment).TOOL_DEFINITIONS):
             raise ValueError("Runtime tool surface differs from exported binding")
         messages: list[dict[str, Any]] = [{"role": "user", "content": instruction}]
@@ -248,7 +251,20 @@ class SemanticVerifier(BaseVerifier):
             response = response_path.read_text() if response_path.exists() else None
             if convention.answer_format == AnswerFormat.STATE and response is None:
                 raise RuntimeError("Stateful agent did not finish with a final message")
-            result = grade_answer(specification, convention, response, self.environment)
+            if specification.verifier.kind == VerifierKind.PRIVATE_COMMAND:
+                if not isinstance(self.environment, DockerShellEnvironment):
+                    raise TypeError("Private command verifier requires a Docker workspace")
+                result = await grade_private_command(specification, self.environment, root)
+            elif specification.verifier.kind == VerifierKind.STATE_MATCH and isinstance(
+                self.environment, AsyncStateGrader
+            ):
+                state_verifier = resolve_verifier(specification.verifier)
+                if not isinstance(state_verifier, StateMatchVerifier) or convention.answer_format != AnswerFormat.STATE:
+                    raise ValueError("State grading requires a state submission convention")
+                reward = await self.environment.grade_state_async(state_verifier.expected_state_json)
+                result = GradeResult(Outcome.GRADED, reward)
+            else:
+                result = grade_answer(specification, convention, response, self.environment)
         except Exception as error:
             result = GradeResult(Outcome.INFRA_ERROR, None, f"{type(error).__name__}: {error}")
             self._write_result(result)

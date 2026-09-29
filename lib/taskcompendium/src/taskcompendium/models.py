@@ -28,6 +28,7 @@ class VerifierKind(StrEnum):
     EXACT_ANSWER = "exact_answer"
     STATE_MATCH = "state_match"
     MCQ_ANSWER = "mcq_answer"
+    PRIVATE_COMMAND = "private_command"
 
 
 class Source(BaseModel):

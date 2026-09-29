@@ -6,11 +6,13 @@
 import hashlib
 import importlib
 import json
+import re
 import stat
+import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -27,14 +29,43 @@ from taskcompendium.resources import (
     validate_resources,
 )
 from taskcompendium.submission import SubmissionConvention, render_instruction
-from taskcompendium.verifier_registry import validate_verifier
+from taskcompendium.verifier_registry import resolve_verifier, validate_verifier
+from taskcompendium.verifiers.private_command import PrivateCommandVerifier
 
 SPECIFICATION_FILE = "specification.json"
 SUBMISSION_CONVENTION_FILE = "submission_convention.json"
 ENVIRONMENT_CONFIG_FILE = "environment_config.json"
 AGENT_RESOURCES_DIR = "inputs"
 PRIVATE_RESOURCES_DIR = "private_resources"
-REGISTERED_PROVIDERS: Mapping[str, str] = MappingProxyType({})
+DOCKER_SHELL_PROVIDER = "docker_shell:v1"
+REGISTERED_PROVIDERS: Mapping[str, str] = MappingProxyType(
+    {DOCKER_SHELL_PROVIDER: "taskcompendium.harbor.docker:DockerShellEnvironment"}
+)
+DOCKER_IMAGE_PATTERN = re.compile(r"[^\s@]+@sha256:([0-9a-f]{64})\Z")
+
+
+class DockerRuntimeBinding(BaseModel):
+    """An immutable container image and workspace for one Harbor trial."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    image: str
+    workdir: str
+
+    @model_validator(mode="after")
+    def validate_runtime(self) -> "DockerRuntimeBinding":
+        if DOCKER_IMAGE_PATTERN.fullmatch(self.image) is None:
+            raise ValueError("Docker image must be pinned by SHA256 digest")
+        path = PurePosixPath(self.workdir)
+        if not path.is_absolute() or path.as_posix() != self.workdir or ".." in path.parts or self.workdir == "/":
+            raise ValueError("Docker workdir must be a normalized absolute path below root")
+        return self
+
+    @property
+    def image_sha256(self) -> str:
+        match = DOCKER_IMAGE_PATTERN.fullmatch(self.image)
+        assert match is not None
+        return match.group(1)
 
 
 class ToolBinding(BaseModel):
@@ -64,25 +95,37 @@ class ToolBinding(BaseModel):
 
 
 class HarborEnvironmentConfig(BaseModel):
-    """A chat environment with an optional pinned tool surface."""
+    """A chat environment with independent tool and container bindings."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     tool_binding: ToolBinding | None = None
+    docker_runtime: DockerRuntimeBinding | None = None
 
 
 def provider_class(binding: ToolBinding) -> type:
     """Resolve the registered implementation named by a tool binding."""
-    module_name, class_name = REGISTERED_PROVIDERS[binding.provider].split(":")
+    return provider_class_for_name(binding.provider)
+
+
+def provider_class_for_name(name: str) -> type:
+    """Resolve a registered provider without accepting arbitrary import paths."""
+    module_name, class_name = REGISTERED_PROVIDERS[name].split(":")
     return getattr(importlib.import_module(module_name), class_name)
 
 
-def validate_provider_surface(binding: ToolBinding) -> None:
+def validate_provider_surface(binding: ToolBinding, docker_runtime: DockerRuntimeBinding | None = None) -> None:
     """Check provider identity and action schemas before an export or launch."""
     provider = provider_class(binding)
+    if binding.provider == DOCKER_SHELL_PROVIDER:
+        if docker_runtime is None or binding.seed_sha256 != docker_runtime.image_sha256:
+            raise ValueError("Docker tool seed differs from pinned image")
+    elif docker_runtime is not None:
+        raise ValueError("Provider does not support a Docker runtime")
+    elif provider.SEED_SHA256 != binding.seed_sha256:
+        raise ValueError("Provider SEED_SHA256 differs from Harbor binding")
     for field, expected in (
         ("ACTION_INTERFACE", binding.action_interface),
-        ("SEED_SHA256", binding.seed_sha256),
         ("PROVIDER_REVISION", binding.provider_revision),
     ):
         if getattr(provider, field) != expected:
@@ -96,6 +139,23 @@ def validate_provider_surface(binding: ToolBinding) -> None:
     names = tuple(definition["function"]["name"] for definition in definitions)
     if names != binding.tools or len(set(names)) != len(names):
         raise ValueError("Provider tool names differ from Harbor binding")
+
+
+def docker_shell_binding(runtime: DockerRuntimeBinding) -> ToolBinding:
+    """Bind the registered shell tool surface to one pinned Docker image."""
+    provider = provider_class_for_name(DOCKER_SHELL_PROVIDER)
+    definitions = provider.TOOL_DEFINITIONS
+    digest = hashlib.sha256(
+        json.dumps(definitions, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
+    return ToolBinding(
+        action_interface=provider.ACTION_INTERFACE,
+        seed_sha256=runtime.image_sha256,
+        provider=DOCKER_SHELL_PROVIDER,
+        provider_revision=provider.PROVIDER_REVISION,
+        tools=tuple(definition["function"]["name"] for definition in definitions),
+        tools_sha256=digest,
+    )
 
 
 @dataclass(frozen=True)
@@ -162,27 +222,44 @@ def select_lowerings(
 
 def validate_environment_config(specification: TaskSpec, environment_config: HarborEnvironmentConfig) -> None:
     """Require the selected binding to satisfy the task's semantic requirements."""
-    if (specification.answer_type == AnswerType.STATE) != (specification.verifier.kind == VerifierKind.STATE_MATCH):
+    state_verifier = specification.verifier.kind in {VerifierKind.STATE_MATCH, VerifierKind.PRIVATE_COMMAND}
+    if (specification.answer_type == AnswerType.STATE) != state_verifier:
         raise ValueError("State result requires state verifier")
     binding = environment_config.tool_binding
-    if binding is None:
-        if (
-            specification.requirements.capabilities
-            or specification.requirements.action_interfaces
-            or specification.requirements.seed_sha256 is not None
+    docker_runtime = environment_config.docker_runtime
+    requirements = specification.requirements
+    if specification.verifier.kind == VerifierKind.PRIVATE_COMMAND:
+        if docker_runtime is None or binding is None or binding.provider != DOCKER_SHELL_PROVIDER:
+            raise ValueError("Private command grading requires a Docker shell binding")
+        verifier = resolve_verifier(specification.verifier)
+        assert isinstance(verifier, PrivateCommandVerifier)
+        if not any(
+            resource.path == verifier.script_path
+            and resource.visibility == ResourceVisibility.VERIFIER
+            and resource.executable
+            for resource in specification.resources
         ):
-            raise ValueError("Chat without tools cannot satisfy capability, action-interface, or seed requirements")
-        if specification.answer_type == AnswerType.STATE:
+            raise ValueError("Private command script must be an executable verifier resource")
+    if docker_runtime is not None:
+        if requirements.seed_sha256 != docker_runtime.image_sha256:
+            raise ValueError("Docker image digest differs from task seed")
+        if set(requirements.capabilities) - {"filesystem", "shell", "process"}:
+            raise ValueError("Docker runtime lacks required capabilities")
+    elif requirements.capabilities:
+        raise ValueError("Environment cannot satisfy required capabilities")
+    if binding is None:
+        if requirements.action_interfaces or (requirements.seed_sha256 is not None and docker_runtime is None):
+            raise ValueError("Chat without tools cannot satisfy action-interface or seed requirements")
+        if specification.answer_type == AnswerType.STATE and docker_runtime is None:
             raise ValueError("Chat without tools cannot grade environment state")
         if any(resource.visibility == ResourceVisibility.AGENT for resource in specification.resources):
             raise ValueError("Chat without tools cannot expose agent-visible files")
         return
-    requirements = specification.requirements
-    if requirements.capabilities or requirements.action_interfaces != (binding.action_interface,):
+    if requirements.action_interfaces != (binding.action_interface,):
         raise ValueError("Tool binding does not satisfy action-interface requirements")
     if requirements.seed_sha256 != binding.seed_sha256:
         raise ValueError("Tool binding seed differs from task seed")
-    validate_provider_surface(binding)
+    validate_provider_surface(binding, docker_runtime)
     if any(resource.visibility == ResourceVisibility.AGENT for resource in specification.resources):
         if not provider_class(binding).SUPPORTS_AGENT_FILES:
             raise ValueError("Tool provider cannot expose agent-visible files")
@@ -245,6 +322,42 @@ def validate_exported_resources(specification: TaskSpec, task_dir: Path) -> None
             raise ValueError(f"Exported resource executable bit differs: {resource.path}")
 
 
+def validate_exported_docker_runtime(
+    specification: TaskSpec, environment_config: HarborEnvironmentConfig, task_dir: Path
+) -> None:
+    """Reject a modified Docker launch definition or undeclared container inputs."""
+    runtime = environment_config.docker_runtime
+    if runtime is None:
+        return
+    config = tomllib.loads((task_dir / "task.toml").read_text())
+    if config != {
+        "version": "1.0",
+        "environment": {
+            "allow_internet": False,
+            "docker_image": runtime.image,
+            "workdir": runtime.workdir,
+        },
+        "verifier": {"environment_mode": "shared"},
+    }:
+        raise ValueError("Exported Docker task configuration differs from binding")
+    environment_dir = task_dir / "environment"
+    declared = {
+        (Path(AGENT_RESOURCES_DIR) / validate_resource_path(resource.path)).as_posix()
+        for resource in specification.resources
+        if resource.visibility == ResourceVisibility.AGENT
+    }
+    if environment_dir.is_symlink() or not environment_dir.is_dir():
+        raise ValueError("Exported Docker environment directory is invalid")
+    actual: set[str] = set()
+    for path in environment_dir.rglob("*"):
+        if path.is_symlink():
+            raise ValueError(f"Exported Docker environment contains a symlink: {path}")
+        if path.is_file():
+            actual.add(path.relative_to(environment_dir).as_posix())
+    if actual != declared:
+        raise ValueError("Exported Docker environment contains undeclared files")
+
+
 def lower_to_harbor(
     specification: TaskSpec,
     convention: SubmissionConvention,
@@ -261,9 +374,12 @@ def lower_to_harbor(
     destination.mkdir(parents=True, exist_ok=False)
     (destination / "environment").mkdir()
     (destination / "instruction.md").write_text(instruction)
-    (destination / "task.toml").write_text(
-        'version = "1.0"\n\n[environment]\nallow_internet = false\n\n[verifier]\nenvironment_mode = "shared"\n'
-    )
+    task_toml = 'version = "1.0"\n\n[environment]\nallow_internet = false\n'
+    if environment_config.docker_runtime is not None:
+        runtime = environment_config.docker_runtime
+        task_toml += f"docker_image = {json.dumps(runtime.image)}\nworkdir = {json.dumps(runtime.workdir)}\n"
+    task_toml += '\n[verifier]\nenvironment_mode = "shared"\n'
+    (destination / "task.toml").write_text(task_toml)
     # Harbor's pinned revision requires a test script even when a custom verifier runs.
     tests_dir = destination / "tests"
     tests_dir.mkdir()

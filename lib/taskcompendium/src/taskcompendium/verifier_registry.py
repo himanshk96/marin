@@ -12,12 +12,14 @@ from taskcompendium.grading import ExactAnswerVerifier, GradeResult, GradingAtte
 from taskcompendium.models import TaskSpec, VerifierKind, VerifierSpec
 from taskcompendium.submission import SubmissionConvention
 from taskcompendium.verifiers.multiple_choice import MultipleChoiceVerifier
+from taskcompendium.verifiers.private_command import PrivateCommandVerifier
 
 VERIFIERS: Mapping[VerifierKind, type[Verifier]] = MappingProxyType(
     {
         VerifierKind.EXACT_ANSWER: ExactAnswerVerifier,
         VerifierKind.STATE_MATCH: StateMatchVerifier,
         VerifierKind.MCQ_ANSWER: MultipleChoiceVerifier,
+        VerifierKind.PRIVATE_COMMAND: PrivateCommandVerifier,
     }
 )
 
