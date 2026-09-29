@@ -14,6 +14,8 @@ from taskcompendium.models import AnswerType, Source, TaskRequirements, TaskSpec
 from taskcompendium.providers.nemo_workplace.provider import (
     ACTION_INTERFACE,
     PROVIDER_REVISION,
+    REQUEST_PARALLEL_TOOL_CALLS,
+    REQUEST_TEMPERATURE,
     SEED_SHA256,
     TOOL_DEFINITIONS,
     TOOLS_SHA256,
@@ -89,7 +91,10 @@ def import_row(data: bytes) -> tuple[TaskSpec, SubmissionConvention, HarborEnvir
     request = row.get("responses_create_params")
     if not isinstance(request, dict) or set(request) != {"input", "tools", "parallel_tool_calls", "temperature"}:
         raise ValueError("Unsupported Workplace source request")
-    if request["parallel_tool_calls"] is not False or request["temperature"] != 1.0:
+    if (
+        request["parallel_tool_calls"] is not REQUEST_PARALLEL_TOOL_CALLS
+        or request["temperature"] != REQUEST_TEMPERATURE
+    ):
         raise ValueError("Unsupported Workplace source tool-call settings")
     schemas = request["tools"]
     if not isinstance(schemas, list) or schemas != get_tools()["schemas"]:

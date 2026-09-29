@@ -103,6 +103,9 @@ async def run_trial(
         if stateful:
             agent_path = "taskcompendium.harbor.adapter:StatefulToolAgent"
             kwargs["max_turns"] = launch.max_turns
+            provider = provider_class(environment_config)
+            kwargs["temperature"] = provider.REQUEST_TEMPERATURE
+            kwargs["parallel_tool_calls"] = provider.REQUEST_PARALLEL_TOOL_CALLS
         agent = {
             "import_path": agent_path,
             "model_name": launch.model,

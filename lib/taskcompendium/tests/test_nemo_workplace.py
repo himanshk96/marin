@@ -234,6 +234,7 @@ async def test_workplace_harbor_scripted_endpoint_recovers_after_tool_error(tmp_
     assert result.verifier_result.rewards == {"reward": 1.0}
     assert len(requests) == 3
     assert len(requests[0]["tools"]) == 27
+    assert all(request["temperature"] == 1.0 and request["parallel_tool_calls"] is False for request in requests)
     assert requests[1]["messages"][-1]["tool_call_id"] == "call-bad"
     assert "Error executing tool" in requests[1]["messages"][-1]["content"]
     assert requests[2]["messages"][-1]["tool_call_id"] == "call-good"
