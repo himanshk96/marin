@@ -282,6 +282,10 @@ def lower_to_harbor(
     (destination / "task.toml").write_text(
         'version = "1.0"\n\n[environment]\nallow_internet = false\n\n[verifier]\nenvironment_mode = "shared"\n'
     )
+    # Harbor's pinned revision requires a test script even when a custom verifier runs.
+    tests_dir = destination / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test.sh").write_text("#!/bin/sh\nexit 0\n")
     (destination / SPECIFICATION_FILE).write_text(specification.model_dump_json(indent=2) + "\n")
     (destination / ENVIRONMENT_CONFIG_FILE).write_text(environment_config.model_dump_json(indent=2) + "\n")
     (destination / SUBMISSION_CONVENTION_FILE).write_text(convention.model_dump_json(indent=2) + "\n")
