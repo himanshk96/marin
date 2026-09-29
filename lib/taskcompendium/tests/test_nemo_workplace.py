@@ -141,8 +141,8 @@ async def test_workplace_tool_error_recovers_and_retains_call_order():
     error = await environment.dispatch_action(action["name"], '{"email_id":"00000057","unknown":"x"}', "call-bad")
     success = await environment.dispatch_action(action["name"], action["arguments"], "call-good")
     assert "Error executing tool" in error
-    assert [entry["call_id"] for entry in environment.trace] == ["call-bad", "call-good"]
-    assert [entry["output"] for entry in environment.trace] == [error, success]
+    assert [entry.call_id for entry in environment.trace] == ["call-bad", "call-good"]
+    assert [entry.output for entry in environment.trace] == [error, success]
     assert environment.grade_state(expected_state_json(row["ground_truth"])) == 1.0
 
 

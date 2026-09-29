@@ -6,12 +6,14 @@
 import hashlib
 import json
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from harbor.environments.base import BaseEnvironment, ExecResult
 from harbor.environments.capabilities import EnvironmentCapabilities
 
+from taskcompendium.harbor.adapter import HARBOR_DOWNLOAD_DIRS, HARBOR_EMPTY_DIRS
 from taskcompendium.providers.nemo_workplace.tools import CASE_SENSITIVE_COLUMNS, get_tools, source_state
 
 ACTION_INTERFACE = "workplace:v1"
@@ -84,6 +86,14 @@ def expected_state_json(gold: list[dict[str, str]]) -> str:
 TOOL_DEFINITIONS = _tool_definitions(get_tools()["schemas"])
 
 
+@dataclass(frozen=True)
+class ToolTrace:
+    call_id: str
+    name: str
+    arguments: str
+    output: str
+
+
 class NemoWorkplaceEnvironment(BaseEnvironment):
     """One fresh copy of the upstream mutable Workplace tools per Harbor trial."""
 
@@ -110,7 +120,7 @@ class NemoWorkplaceEnvironment(BaseEnvironment):
         if _json_digest(TOOL_DEFINITIONS) != TOOLS_SHA256:
             raise ValueError("NeMo Workplace tools do not match their pinned schemas")
         self.tool_env = get_tools()
-        self.trace: list[dict[str, str]] = []
+        self.trace: list[ToolTrace] = []
         super().__init__(*args, **kwargs)
 
     @staticmethod
@@ -136,7 +146,7 @@ class NemoWorkplaceEnvironment(BaseEnvironment):
         raise ValueError("Workplace provider does not expose shell execution")
 
     async def empty_dirs(self, dirs, *, chmod: bool = True) -> None:
-        if not set(map(str, dirs)).issubset({"/logs/agent", "/logs/verifier", "/logs/artifacts", "/tests"}):
+        if not set(map(str, dirs)).issubset(HARBOR_EMPTY_DIRS):
             raise ValueError("Workplace provider does not expose filesystem operations")
 
     async def upload_file(self, source_path, target_path) -> None:
@@ -149,7 +159,7 @@ class NemoWorkplaceEnvironment(BaseEnvironment):
         raise ValueError("Workplace provider does not expose filesystem downloads")
 
     async def download_dir(self, source_dir, target_dir) -> None:
-        if source_dir not in {"/logs/agent", "/logs/artifacts"}:
+        if source_dir not in HARBOR_DOWNLOAD_DIRS:
             raise ValueError("Workplace provider does not expose filesystem downloads")
 
     async def native_tool_definitions(self) -> list[dict[str, Any]]:
@@ -164,7 +174,7 @@ class NemoWorkplaceEnvironment(BaseEnvironment):
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
             output = f"Error executing tool '{name}': {error}"
         encoded = json.dumps({"output": output}, default=_json_default, separators=(",", ":"))
-        self.trace.append({"call_id": call_id, "name": name, "arguments": arguments, "output": encoded})
+        self.trace.append(ToolTrace(call_id=call_id, name=name, arguments=arguments, output=encoded))
         return encoded
 
     def authoritative_state(self) -> dict[str, Any]:
