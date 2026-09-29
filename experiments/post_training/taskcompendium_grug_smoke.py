@@ -56,6 +56,8 @@ SEED = 17
 TASK_COUNT = 8
 MAX_STEPS = 1
 MAX_TURNS = 3
+# Row 0's first prompt is 4,222 tokens with its 27 tools and this tokenizer.
+REQUEST_WINDOW_TOKENS = 8192
 
 ROLE_PLAN = SkyRLRolePlan(
     colocate_all=True,
@@ -148,7 +150,7 @@ config_groups:
   taskcompendium_config: taskcompendium
 
 context_budget:
-  request_window_tokens: 4096
+  request_window_tokens: {REQUEST_WINDOW_TOKENS}
   max_new_tokens_per_turn: 256
   max_turns: {MAX_TURNS}
 
@@ -201,7 +203,7 @@ generator:
   model_dtype: bfloat16
   vllm_attention_backend: FLASH_ATTN
   gpu_memory_utilization: 0.65
-  max_num_batched_tokens: 4096
+  max_num_batched_tokens: {REQUEST_WINDOW_TOKENS}
   enforce_eager: false
   run_engines_locally: true
   weight_sync_backend: nccl
